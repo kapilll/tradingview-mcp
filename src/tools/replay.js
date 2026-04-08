@@ -38,4 +38,9 @@ export function registerReplayTools(server) {
     try { return jsonResult(await core.status()); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
+
+  server.tool('replay_get_price', 'Get the current bar OHLCV data during replay mode. Use this to read the exact price for logging trade entries/exits.', {}, async () => {
+    try { return jsonResult(await core.getPrice()); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
 }
