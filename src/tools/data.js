@@ -83,4 +83,9 @@ export function registerDataTools(server) {
     try { return jsonResult(await core.getStudyValues()); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
+
+  server.tool('data_probe_strategy', 'Diagnostic: dump all properties and methods on strategy data sources. Use this to discover the correct API paths for Strategy Tester data extraction in your TV version.', {}, async () => {
+    try { return jsonResult(await core.probeStrategy()); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
 }

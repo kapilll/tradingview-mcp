@@ -5,7 +5,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { start, step, autoplay, stop, trade, status, VALID_AUTOPLAY_DELAYS } from '../src/core/replay.js';
+import { start, step, autoplay, stop, trade, status, getPrice, VALID_AUTOPLAY_DELAYS } from '../src/core/replay.js';
 
 // ── Mock helpers ─────────────────────────────────────────────────────────
 
@@ -350,5 +350,37 @@ describe('status()', () => {
     assert.equal(result.current_date, 1700000000);
     assert.equal(result.position, 2);
     assert.equal(result.realized_pnl, 123.45);
+  });
+});
+
+// ── getPrice() ──────────────────────────────────────────────────────────
+
+describe('getPrice() — current bar OHLCV during replay', () => {
+  it('returns OHLCV data when replay is started', async () => {
+    const { _deps } = mockDeps({
+      'isReplayStarted': true,
+      'bars': { time: 1700000000, open: 1.085, high: 1.087, low: 1.083, close: 1.086, volume: 1234, bar_index: 500 },
+      'currentDate': 1700000000,
+    });
+    const result = await getPrice({ _deps });
+    assert.equal(result.success, true);
+    assert.equal(result.open, 1.085);
+    assert.equal(result.high, 1.087);
+    assert.equal(result.low, 1.083);
+    assert.equal(result.close, 1.086);
+    assert.equal(result.volume, 1234);
+  });
+
+  it('throws when replay is not started', async () => {
+    const { _deps } = mockDeps({ 'isReplayStarted': false });
+    await assert.rejects(() => getPrice({ _deps }), /Replay is not started/);
+  });
+
+  it('throws when bar data is null', async () => {
+    const { _deps } = mockDeps({
+      'isReplayStarted': true,
+      'bars': null,
+    });
+    await assert.rejects(() => getPrice({ _deps }), /Could not read current replay bar/);
   });
 });
