@@ -119,6 +119,30 @@ export async function trade({ action, _deps }) {
   return { success: true, action, position, realized_pnl: pnl };
 }
 
+export async function getPrice({ _deps } = {}) {
+  const { evaluate, getReplayApi } = _resolve(_deps);
+  const rp = await getReplayApi();
+  const started = await evaluate(wv(`${rp}.isReplayStarted()`));
+  if (!started) throw new Error('Replay is not started. Use replay_start first.');
+
+  // Read the last bar from the main series — during replay this is the current replay bar
+  const data = await evaluate(`
+    (function() {
+      var chart = window.TradingViewApi._activeChartWidgetWV.value()._chartWidget;
+      var bars = chart.model().mainSeries().bars();
+      if (!bars || typeof bars.lastIndex !== 'function') return null;
+      var idx = bars.lastIndex();
+      var v = bars.valueAt(idx);
+      if (!v) return null;
+      return { time: v[0], open: v[1], high: v[2], low: v[3], close: v[4], volume: v[5] || 0, bar_index: idx };
+    })()
+  `);
+  if (!data) throw new Error('Could not read current replay bar. Chart may still be loading.');
+
+  const currentDate = await evaluate(wv(`${rp}.currentDate()`));
+  return { success: true, current_date: currentDate, ...data };
+}
+
 export async function status({ _deps } = {}) {
   const { evaluate, getReplayApi } = _resolve(_deps);
   const rp = await getReplayApi();
