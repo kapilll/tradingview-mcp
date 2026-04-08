@@ -142,67 +142,35 @@ export async function getStrategyResults() {
         for (var i = 0; i < sources.length; i++) {
           var s = sources[i];
           if (!s.metaInfo) continue;
-          try {
-            if (s.metaInfo().is_price_study === false) { strat = s; break; }
-          } catch(e) {}
+          try { if (s.metaInfo().isTVScriptStrategy) { strat = s; break; } } catch(e) {}
         }
-        if (!strat) return {metrics: {}, source: 'internal_api', error: 'No strategy found on chart. Add a strategy indicator first.'};
+        if (!strat) return {metrics: {}, source: 'internal_api', error: 'No strategy found on chart. Add a Pine strategy first.'};
 
         function unwrap(v) {
           if (v && typeof v === 'object' && typeof v.value === 'function') return v.value();
           return v;
         }
-        function extractObj(obj) {
-          if (!obj || typeof obj !== 'object') return null;
-          var m = {};
-          var keys = Object.keys(obj);
-          for (var k = 0; k < keys.length; k++) {
-            var val = obj[keys[k]];
-            if (val !== null && val !== undefined && typeof val !== 'function' && typeof val !== 'object') m[keys[k]] = val;
-          }
-          return Object.keys(m).length > 0 ? m : null;
+
+        // reportData() returns {performance, filledOrders, trades, buyHold, currency, settings}
+        var rd = unwrap(typeof strat.reportData === 'function' ? strat.reportData() : strat._reportData);
+        if (rd && rd.performance) {
+          var perf = rd.performance;
+          var metrics = {};
+          // Flatten all/long/short into top-level with prefixes
+          if (perf.all) { Object.keys(perf.all).forEach(function(k) { metrics[k] = perf.all[k]; }); }
+          if (perf.long) { Object.keys(perf.long).forEach(function(k) { metrics['long_' + k] = perf.long[k]; }); }
+          if (perf.short) { Object.keys(perf.short).forEach(function(k) { metrics['short_' + k] = perf.short[k]; }); }
+          // Add top-level perf fields
+          ['maxStrategyDrawDown', 'maxStrategyDrawDownPercent', 'maxStrategyRunUp', 'maxStrategyRunUpPercent',
+           'openPL', 'openPLPercent', 'buyHoldReturn', 'buyHoldReturnPercent', 'buyHoldGainPercent',
+           'sharpeRatio', 'sortinoRatio', 'maxMarginUsed', 'avgMarginUsed'].forEach(function(k) {
+            if (perf[k] !== undefined) metrics[k] = perf[k];
+          });
+          metrics.currency = rd.currency;
+          return {metrics: metrics, source: 'internal_api', source_path: 'reportData().performance'};
         }
 
-        var metrics = {};
-        var source_path = '';
-
-        // Try known property names in priority order
-        var reportCandidates = [
-          'reportData', '_reportData', 'strategyReport', '_strategyReport',
-          'report', '_report', 'performanceReport', '_performanceReport',
-          'summaryReport', '_summaryReport', 'performance', '_performance',
-          'strategyPerformance', '_strategyPerformance', 'strategyResults', '_strategyResults',
-          'results', '_results',
-        ];
-        for (var r = 0; r < reportCandidates.length; r++) {
-          if (Object.keys(metrics).length > 0) break;
-          var key = reportCandidates[r];
-          if (strat[key] === undefined) continue;
-          try {
-            var val = typeof strat[key] === 'function' ? strat[key]() : strat[key];
-            val = unwrap(val);
-            var extracted = extractObj(val);
-            if (extracted) { metrics = extracted; source_path = key; }
-          } catch(e) {}
-        }
-
-        // Fallback: scan own properties for anything containing 'report', 'perf', 'result'
-        if (Object.keys(metrics).length === 0) {
-          var ownProps = Object.getOwnPropertyNames(strat);
-          for (var o = 0; o < ownProps.length; o++) {
-            if (Object.keys(metrics).length > 0) break;
-            var prop = ownProps[o];
-            if (!/report|perf|result|summar/i.test(prop)) continue;
-            try {
-              var pv = typeof strat[prop] === 'function' ? strat[prop]() : strat[prop];
-              pv = unwrap(pv);
-              var pe = extractObj(pv);
-              if (pe && Object.keys(pe).length >= 3) { metrics = pe; source_path = prop + ' (auto-discovered)'; }
-            } catch(e) {}
-          }
-        }
-
-        return {metrics: metrics, source: 'internal_api', source_path: source_path || 'none found'};
+        return {metrics: {}, source: 'internal_api', error: 'reportData() returned no performance data. Strategy may still be computing.'};
       } catch(e) { return {metrics: {}, source: 'internal_api', error: e.message}; }
     })()
   `);
@@ -220,49 +188,34 @@ export async function getTrades({ max_trades } = {}) {
         for (var i = 0; i < sources.length; i++) {
           var s = sources[i];
           if (!s.metaInfo) continue;
-          try {
-            if (s.metaInfo().is_price_study === false) { strat = s; break; }
-          } catch(e) {}
+          try { if (s.metaInfo().isTVScriptStrategy) { strat = s; break; } } catch(e) {}
         }
-        if (!strat) return {trades: [], source: 'internal_api', error: 'No strategy found on chart.'};
+        if (!strat) return {trades: [], source: 'internal_api', error: 'No strategy found on chart. Add a Pine strategy first.'};
 
         function unwrap(v) {
           if (v && typeof v === 'object' && typeof v.value === 'function') return v.value();
           return v;
         }
-        function tryGetArray(obj, key) {
-          if (obj[key] === undefined) return null;
-          var val = typeof obj[key] === 'function' ? obj[key]() : obj[key];
-          val = unwrap(val);
-          return Array.isArray(val) ? val : null;
-        }
 
+        // reportData().filledOrders has all orders; reportData().trades has round-trip trades
+        var rd = unwrap(typeof strat.reportData === 'function' ? strat.reportData() : strat._reportData);
         var orders = null;
         var source_path = '';
 
-        // Try known property names in priority order
-        var orderCandidates = [
-          'ordersData', '_ordersData', '_orders', 'tradesData', '_tradesData',
-          'trades', '_trades', 'orderList', '_orderList', 'filledOrders', '_filledOrders',
-          'closedTrades', '_closedTrades', 'tradeHistory', '_tradeHistory',
-        ];
-        for (var c = 0; c < orderCandidates.length; c++) {
-          var arr = tryGetArray(strat, orderCandidates[c]);
-          if (arr && arr.length > 0) { orders = arr; source_path = orderCandidates[c]; break; }
+        if (rd) {
+          if (rd.filledOrders && rd.filledOrders.length > 0) { orders = rd.filledOrders; source_path = 'reportData().filledOrders'; }
+          else if (rd.trades && rd.trades.length > 0) { orders = rd.trades; source_path = 'reportData().trades'; }
         }
 
-        // Fallback: scan own properties for arrays that look like trade data
+        // Fallback: ordersData() on prototype
         if (!orders) {
-          var ownProps = Object.getOwnPropertyNames(strat);
-          for (var o = 0; o < ownProps.length; o++) {
-            var prop = ownProps[o];
-            if (!/order|trade|fill/i.test(prop)) continue;
-            var arr2 = tryGetArray(strat, prop);
-            if (arr2 && arr2.length > 0) { orders = arr2; source_path = prop + ' (auto-discovered)'; break; }
-          }
+          try {
+            var od = unwrap(typeof strat.ordersData === 'function' ? strat.ordersData() : null);
+            if (Array.isArray(od) && od.length > 0) { orders = od; source_path = 'ordersData()'; }
+          } catch(ex) {}
         }
 
-        if (!orders || orders.length === 0) return {trades: [], source: 'internal_api', source_path: source_path || 'none found', error: 'No trade/order data found on strategy. Run data_probe_strategy for diagnostics.'};
+        if (!orders || orders.length === 0) return {trades: [], source: 'internal_api', source_path: source_path || 'none found', error: 'No trade data found. Strategy may still be computing.'};
 
         var result = [];
         for (var t = 0; t < Math.min(orders.length, ${limit}); t++) {
@@ -291,11 +244,9 @@ export async function getEquity() {
         for (var i = 0; i < sources.length; i++) {
           var s = sources[i];
           if (!s.metaInfo) continue;
-          try {
-            if (s.metaInfo().is_price_study === false) { strat = s; break; }
-          } catch(e) {}
+          try { if (s.metaInfo().isTVScriptStrategy) { strat = s; break; } } catch(e) {}
         }
-        if (!strat) return {data: [], source: 'internal_api', error: 'No strategy found on chart.'};
+        if (!strat) return {data: [], source: 'internal_api', error: 'No strategy found on chart. Add a Pine strategy first.'};
 
         function unwrap(v) {
           if (v && typeof v === 'object' && typeof v.value === 'function') return v.value();
@@ -305,79 +256,35 @@ export async function getEquity() {
         var data = [];
         var source_path = '';
 
-        // Try known equity/bar data properties
-        var equityCandidates = [
-          'equityData', '_equityData', 'equityCurve', '_equityCurve',
-          'equity', '_equity', 'drawdownData', '_drawdownData',
-        ];
-        for (var e = 0; e < equityCandidates.length; e++) {
-          if (data.length > 0) break;
-          var key = equityCandidates[e];
-          if (strat[key] === undefined) continue;
+        // reportData().buyHold contains the equity curve data points
+        var rd = unwrap(typeof strat.reportData === 'function' ? strat.reportData() : strat._reportData);
+        if (rd && rd.buyHold && Array.isArray(rd.buyHold) && rd.buyHold.length > 0) {
+          data = rd.buyHold;
+          source_path = 'reportData().buyHold';
+        }
+
+        // Fallback: try bars() — strategy study bars contain equity data
+        if (data.length === 0) {
           try {
-            var val = typeof strat[key] === 'function' ? strat[key]() : strat[key];
-            val = unwrap(val);
-            if (Array.isArray(val) && val.length > 0) { data = val; source_path = key; }
+            var bars = typeof strat.bars === 'function' ? strat.bars() : strat.bars;
+            bars = unwrap(bars);
+            if (bars && typeof bars.lastIndex === 'function') {
+              var end = bars.lastIndex(); var start = bars.firstIndex();
+              for (var i = start; i <= end; i++) { var v = bars.valueAt(i); if (v) data.push({time: v[0], equity: v[1], drawdown: v[2] || null}); }
+              if (data.length > 0) source_path = 'bars()';
+            }
           } catch(ex) {}
         }
 
-        // Try bars() — strategy study bars contain equity data
-        if (data.length === 0) {
-          var barsCandidates = ['bars', '_bars'];
-          for (var b = 0; b < barsCandidates.length; b++) {
-            if (data.length > 0) break;
-            var bkey = barsCandidates[b];
-            if (strat[bkey] === undefined) continue;
-            try {
-              var bars = typeof strat[bkey] === 'function' ? strat[bkey]() : strat[bkey];
-              bars = unwrap(bars);
-              if (bars && typeof bars.lastIndex === 'function') {
-                var end = bars.lastIndex(); var start = bars.firstIndex();
-                for (var i = start; i <= end; i++) { var v = bars.valueAt(i); if (v) data.push({time: v[0], equity: v[1], drawdown: v[2] || null}); }
-                if (data.length > 0) source_path = bkey + '.bars()';
-              }
-            } catch(ex) {}
-          }
-        }
-
-        // Fallback: scan own properties for equity-related arrays
-        if (data.length === 0) {
-          var ownProps = Object.getOwnPropertyNames(strat);
-          for (var o = 0; o < ownProps.length; o++) {
-            if (data.length > 0) break;
-            var prop = ownProps[o];
-            if (!/equity|curve|drawdown/i.test(prop)) continue;
-            try {
-              var pv = typeof strat[prop] === 'function' ? strat[prop]() : strat[prop];
-              pv = unwrap(pv);
-              if (Array.isArray(pv) && pv.length > 0) { data = pv; source_path = prop + ' (auto-discovered)'; }
-            } catch(ex) {}
-          }
-        }
-
-        // Last resort: try to get performance summary with equity-related fields
-        if (data.length === 0) {
+        // Last resort: extract equity summary from performance data
+        if (data.length === 0 && rd && rd.performance) {
           var perfData = {};
-          var perfCandidates = [
-            'reportData', '_reportData', 'performance', '_performance',
-            'strategyReport', '_strategyReport', 'report', '_report',
-          ];
-          for (var pc = 0; pc < perfCandidates.length; pc++) {
-            if (Object.keys(perfData).length > 0) break;
-            var pkey = perfCandidates[pc];
-            if (strat[pkey] === undefined) continue;
-            try {
-              var perf = typeof strat[pkey] === 'function' ? strat[pkey]() : strat[pkey];
-              perf = unwrap(perf);
-              if (perf && typeof perf === 'object') {
-                var pkeys = Object.keys(perf);
-                for (var p = 0; p < pkeys.length; p++) {
-                  if (/equity|drawdown|profit|net/i.test(pkeys[p])) perfData[pkeys[p]] = perf[pkeys[p]];
-                }
-              }
-            } catch(ex) {}
+          var perf = rd.performance;
+          var pkeys = Object.keys(perf);
+          for (var p = 0; p < pkeys.length; p++) {
+            if (/equity|drawdown|profit|net|buyHold/i.test(pkeys[p])) perfData[pkeys[p]] = perf[pkeys[p]];
           }
-          if (Object.keys(perfData).length > 0) return {data: [], equity_summary: perfData, source: 'internal_api', source_path: 'performance summary', note: 'Full equity curve not available; equity summary metrics returned instead.'};
+          if (Object.keys(perfData).length > 0) return {data: [], equity_summary: perfData, source: 'internal_api', source_path: 'reportData().performance summary', note: 'Full equity curve not available; equity summary metrics returned instead.'};
         }
 
         return {data: data, source: 'internal_api', source_path: source_path || 'none found'};
@@ -586,11 +493,11 @@ export async function probeStrategy() {
           if (!s.metaInfo) continue;
           try {
             var meta = s.metaInfo();
-            if (meta.is_price_study !== false) continue;
+            if (!meta.isTVScriptStrategy) continue;
             var info = {
               index: i,
               description: meta.description || meta.shortDescription || '(unnamed)',
-              is_price_study: meta.is_price_study,
+              isTVScriptStrategy: meta.isTVScriptStrategy,
               meta_keys: Object.keys(meta).slice(0, 30),
             };
             // Dump all own property names
